@@ -8,9 +8,7 @@ import requests
 import json
 from table_schema import database_schema_string,ngfa_database_schema_string#,ngfa_table_schema
 from generate_ngfa_sql import prepocess,generate_settlement_sql
-import sqlparse
-from prompt1 import few_shot
-from prompt2 import session
+
 
 # 其中根据省份的拼音首字母大写作为省份筛选条件，源端省份使用srcProvinceCode，目标省份使用dstProvinceCode，路由省份与源端省份相同；
 #                     流量类型根据表结构中的枚举进行转换，源端类型通过srcType筛选，目标端类型通过dstType筛选；
@@ -44,26 +42,28 @@ functions = [{
                 },
                 "srcType": {
                         "type": "String",
-                        "description": "源端类型，一般出现在源端省份后,当出现多个时，用+连接，若没有指定，则返回''"
+                        "description": "源端类型，一般出现在源端省份后,当出现多个时，用','连接，若没有指定，则返回''"
                 },
                 "dstType": {
                         "type": "String",
-                        "description": "目标类型，一般出现在目标省份后，当出现多个时，用+连接，若没有指定，则返回''"
+                        "description": "目标类型，一般出现在目标省份后，当出现多个时，用','连接，若没有指定，则返回''"
                 },
                 "routerProvince": {
                         "type": "String",
-                        "description": "路由省份，当输入中存在'从某某省份设备上看'，即该省份为路由省份，例从江苏设备上看，则输出江苏；若用户输入没有设定，则输出与源端省份输出相同"
+
+                        "description": "路由省份,当输入中存在'从某某省份设备上看'，即该省份为路由省份，例从江苏设备上看，则输出江苏；若用户输入没有设定，则输出与源端省份输出相同"
                 },
+
                 "startTime": {
-                        "type": "String",
-                        "description": "开始时间，如果输入的时间描述为昨日或者今日等，请根据系统当前的时间和日期转换，输出的格式为YYYY-MM-DD HH:mm:ss,例2023-12-10 00:00:00"
+                        "type": "DateTime",
+                        "description": "开始时间,例:2023-10-10 12:23:34"
                 },
                 "endTime": {
-                        "type": "String",
-                        "description": "结束时间，如果输入的时间描述为昨日或者今日等，请根据系统当前的时间和日期转换，输出的格式为YYYY-MM-DD HH:mm:ss,例2023-12-10 00:00:00"
+                        "type": "DateTime",
+                        "description": "结束时间,例:2023-10-10 12:23:34"
                 }
             },
-            "required": ["srcProvince","dstProvince","srcType","dstType","routerProvince","startTime","endTime"],
+            "required": ["srcProvince","dstProvince","srcType","dstType","routerProvince"],
         },
     }]
 def create_chat_completion(model, messages, functions, use_stream=False):
@@ -74,7 +74,8 @@ def create_chat_completion(model, messages, functions, use_stream=False):
             "model": model,  # 模型名称
             "messages": messages,  # 会话历史
             "stream": use_stream,  # 是否流式响应
-            "max_tokens": 1000,  # 最多生成字数
+            "max_tokens": 1000,  # 最多生成字数123
+            
             "temperature": 0.8,  # 温度
             "top_p": 0.8,  # 采样概率
         }
@@ -91,7 +92,6 @@ def create_chat_completion(model, messages, functions, use_stream=False):
 
     response = requests.post(f"{base_url}/v1/chat/completions", json=data, stream=use_stream)
     if response.status_code == 200:
-        print(use_stream)
         if use_stream:
             # 处理流式响应
             for line in response.iter_lines():
