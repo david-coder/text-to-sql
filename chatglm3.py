@@ -8,6 +8,7 @@ import requests
 import json
 from table_schema import database_schema_string,ngfa_database_schema_string#,ngfa_table_schema
 from generate_ngfa_sql import prepocess,generate_settlement_sql
+import sqlparse
 from prompt1 import few_shot
 from prompt2 import session
 
@@ -16,13 +17,20 @@ from prompt2 import session
 #                     当源省份和目标省份不同时，通过上行口出端口统计，通过outInterfaceType筛选；当源省份和目标省份相同时，走下行口的入端口进行统计，通过inInterfaceType筛选；
 #                     时间通过timestamp进行筛选。
 #                     返回的查询SQL包装在json中，且SQL需要满足MYSQL数据库的语法。
-
 functions = [{
         "name": "text_convert",
         "description": f"该方法用于解析用户的问题，将用户的提问分解为源端省份编码、目标省份编码、源端类型、目标类型、开始时间、结束时间"
                        f"其中解析需要依据如下表结构{ngfa_database_schema_string}"
                        f"例1从安徽城域网流入浙江IDC的均值流量，其中源端省份为安徽，源端类型城域网，目标省份为浙江，目标类型为IDC；"
-                       f"例2从安徽城域网+IDC流入浙江IDC的均值流量，其中源端省份为安徽，源端类型城域网+IDC，目标省份为浙江，目标类型为IDC；",
+                       f"例2从安徽城域网+IDC流入浙江IDC的均值流量，其中源端省份为安徽，源端类型城域网+IDC，目标省份为浙江，目标类型为IDC；"
+                       f"例3从安徽城域网流入浙江的均值流量，其中源端省份为安徽，源端类型城域网，目标省份为浙江，目标类型为''；"
+                       f"例4从安徽城域网流出的均值流量，其中源端省份为安徽，源端类型城域网，目标省份为''，目标类型为''；"
+                       f"例5从北京流出到31省及云公司的均值流量，其中源端省份为北京，源端类型为''，目标省份为全国，目标类型为''；"
+                       f"例6从31省及云公司流出到北京的均值流量，其中源端省份为全国，源端类型为''，目标省份为北京，目标类型为''；"
+                       f"例7北京所有类型在2023-12-18 00:00:00至2023-12-18 12:00:00时间区间内流出到31省及云公司的均值流量速率(单位:Gbps)，其中源端省份为北京，源端类型为''，目标省份为全国，目标类型为''；"
+                       f"例8北京IDC流出到31省及云公司的均值流量速率(单位:Gbps)，其中源端省份为北京，源端类型为IDC，目标省份为全国，目标类型为''；"
+                       f"例9北京所有类型流出到31省及云公司IDC的均值流量速率(单位:Gbps)，其中源端省份为北京，源端类型为''，目标省份为全国，目标类型为IDC；"
+                       f"例10浙江WLW和IDC流入到江苏IDC的均值流量(单位Gbps)，其中源端省份为'安徽'，源端类型'WLW+IDC'，目标省份为'江苏'，目标类型为IDC；",
         "parameters": {
             "type": "array",
             "properties": {
@@ -46,24 +54,18 @@ functions = [{
                         "type": "String",
                         "description": "路由省份，当输入中存在'从某某省份设备上看'，即该省份为路由省份，例从江苏设备上看，则输出江苏；若用户输入没有设定，则输出与源端省份输出相同"
                 },
-                "interfaceType": {
-                        "type": "String",
-                        "description": "当路由省份等于源端省份，输出为'出端口的上行口';当"
-                },
-
                 "startTime": {
                         "type": "String",
-                        "description": "开始时间"
+                        "description": "开始时间，如果输入的时间描述为昨日或者今日等，请根据系统当前的时间和日期转换，输出的格式为YYYY-MM-DD HH:mm:ss,例2023-12-10 00:00:00"
                 },
                 "endTime": {
                         "type": "String",
-                        "description": "结束时间"
+                        "description": "结束时间，如果输入的时间描述为昨日或者今日等，请根据系统当前的时间和日期转换，输出的格式为YYYY-MM-DD HH:mm:ss,例2023-12-10 00:00:00"
                 }
             },
             "required": ["srcProvince","dstProvince","srcType","dstType","routerProvince","startTime","endTime"],
         },
     }]
-
 def create_chat_completion(model, messages, functions, use_stream=False):
     base_url = "http://172.16.16.99:8000"
     if functions == None:
@@ -108,6 +110,7 @@ def create_chat_completion(model, messages, functions, use_stream=False):
             content = decoded_line.get("choices", [{}])[0].get("message", "").get("content", "")
             #print(f'你的回答是{content}')
             if functions != None:
+                print(f'content:{content}')
                 mid_result = content.split('tool_call')[1].replace("```","")
                 #print(mid_result)
                 return mid_result
@@ -118,6 +121,7 @@ def create_chat_completion(model, messages, functions, use_stream=False):
         return None
 
 def function_chat(prompt,use_stream=False):
+    print("function call",prompt)
     chat_messages = [
         #session,
         {"role": "user", "content": prompt}
@@ -128,7 +132,15 @@ def function_chat(prompt,use_stream=False):
     re = prepocess(result)
     print(re)
     sql = generate_settlement_sql(re)
-    print(sql)
+    print(f'原始sql:{sql}')
+    # chat_messages = [
+    #     # session,
+    #     {"role": "user", "content": f"请帮我美化一下{sql}，对SQL内容不进行修改"}
+    # ]
+    # formatted_sql = create_chat_completion("chatglm3-6b", messages=chat_messages, functions=None, use_stream=use_stream)
+    # print(f'转换后的SQL:{formatted_sql}')
+    return sql
+
     # chat_messages = [
     #     session,
     #     {"role": "user", "content": sql_input}
@@ -136,9 +148,7 @@ def function_chat(prompt,use_stream=False):
     # sql = create_chat_completion("chatglm3-6b", messages=chat_messages, functions=None, use_stream=use_stream)
     # print(f'sql:{sql}')
     # return sql
-
-
-if __name__ == '__main__':
-    while (1):
-        a = input("请输入：")
-        function_chat(a)
+# if __name__ == '__main__':
+#     while (1):
+#         a = input("请输入：")
+#         function_chat(a)
