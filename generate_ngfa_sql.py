@@ -15,13 +15,38 @@ type_dict = {'IDC':'1','城域网':'2','IDC客户':'3','中国移动':'4','中�
 provience_dict = {'海南': 'HI', '江苏': 'JS', '宁夏': 'NX', '安徽': 'AH', '重庆': 'CQ', '甘肃': 'GS', '黑龙江': 'HL', '吉林': 'JL',
                   '辽宁': 'LN', '贵州': 'GZ', '新疆': 'XJ', '西藏': 'XZ', '云南': 'YN', '福建': 'FJ', '青海': 'QH', '四川': 'SC',
                   '上海': 'SH', '广西': 'GX', '陕西': 'SN', '北京': 'BJ', '河南': 'HA', '山西': 'SX', '广东': 'GD', '湖北': 'HB',
-                  '江西': 'JX', '河北': 'HE', '湖南': 'HN', '内蒙古': 'NM', '山东': 'SD', '天津': 'TJ', '浙江': 'ZJ','全国':('LT','YD','WG','DNS','')}
+                  '江西': 'JX', '河北': 'HE', '湖南': 'HN', '内蒙古': 'NM', '山东': 'SD', '天津': 'TJ', '浙江': 'ZJ',
+                  '全国':('LT','YD','WG','DNS',''),'31省及云公司':('LT','YD','WG','DNS','')}
+
+provience_list = list(provience_dict.keys())
+print(provience_list)
 
 import difflib
 
 def calculate_similarity(str1, str2):
     similarity = difflib.SequenceMatcher(None, str1, str2).ratio()
     return similarity
+
+def provience_check(provience_name,provience_list):
+    sim_dict= {}
+    if provience_name != '':
+        similarity_list = []
+        for provience in provience_list:
+            #print(provience_name,provience)
+            sim = calculate_similarity(provience_name,provience)
+            similarity_list.append(sim)
+            sim_dict[provience] = sim
+        print(provience_name,sim_dict)
+        # 无法匹配
+        if max(similarity_list) == 0:
+            check_data = '全国'
+        else:
+            max_index = max(range(len(similarity_list)), key=lambda x: similarity_list[x])
+            check_data = provience_list[max_index]
+            #print(provience_name, check_data)
+    else:
+        check_data = ''
+    return check_data
 
 def prepocess(function_result):
     '''
@@ -50,7 +75,8 @@ def generate_provience(condition):
         condition_list = condition.split("+")
         for con in condition_list:
             con = con.replace("'")
-            condition_tuple += (provience_dict[con],)
+            check = provience_check(con,provience_list)
+            condition_tuple += (provience_dict[check],)
         provience_condition = condition_tuple
     elif condition == '全国':
         provience_condition = provience_dict[condition]
@@ -58,7 +84,8 @@ def generate_provience(condition):
     else:
         try:
             condition = condition.replace("'",'')
-            condition_tuple += (provience_dict[condition],)
+            check = provience_check(condition, provience_list)
+            condition_tuple += (provience_dict[check],)
             provience_condition = condition_tuple
         except Exception as e:
             print(e)
@@ -101,8 +128,13 @@ def generate_interface(condition):
     :param condition:CHATGLM3 funcion call 的输出{'srcProvince': "'安徽'", 'dstProvince': "'江苏'", 'srcType': "'城域网+IDC'", 'dstType': "'城域网+IDC'", 'routerProvince': "'安徽'", 'startTime': "'2023-12-18 00:00:00'", 'endTime': "'2023-12-18 12:00:00'"}
     :return:
     '''
-    print(condition['srcProvince'],condition['dstProvince'],condition['routerProvince'])
+    #print(condition['srcProvince'],condition['dstProvince'],condition['routerProvince'])
     # 源端省份与目标省份相同，从入接口的下行口统计
+    if 'routerProvince' in condition.keys():
+        pass
+    else:
+        condition['routerProvince'] = condition['srcProvince']
+
     if condition['srcProvince'] == condition['dstProvince']:
         interface_condition = "inInterfaceType = 'dt'"
     # 当路由省份为空，且目标省份和源端省份不同，默认走源端路由出发，因此从出端口的上行口统计
@@ -142,22 +174,43 @@ def generate_settlement_sql(input):
     ET = arrow.get(input['endTime']).format('YYYY-MM-DD HH:mm:ss')
     # 计算开始时间和结束时间的小时差，方便计算流量均值
     time_diff = generate_time_diff_hour(ST,ET)
+    if '31省及云公司' in input['dstProvince']:
+        input['dstProvince'] = '全国'
+    if '31省及云公司' in  input['srcProvince']:
+        input['srcProvince'] = '全国'
+
     if input['dstProvince'] !='全国' and input['srcProvince'] !='全国':
         # 生成路由省份的筛选条件
-        routeProvienceCon = generate_provience(input['routerProvince'])
+        try:
+            routeProvienceCon = generate_provience(input['routerProvince'])
+        except Exception as e:
+            print(e)
+            routeProvienceCon = generate_provience(input['srcProvince'])
         # 生成源端省份的筛选条件
+
         srcProvinceCon = generate_provience(input['srcProvince'])
-        # 生成筛选接口属性条件
-        InterfaceTypeCon = generate_interface(input)
-        if routeProvienceCon == '':
-            routeProvienceCon = srcProvinceCon
+        if srcProvinceCon != '':
+            srcPro = srcProvinceCon
+            srcProvinceCon = f'and srcProvinceCode in {srcProvinceCon}'
 
         # 目标城市的筛选条件，没有指定则是空
         dstProvinceCon = generate_provience(input['dstProvince'])
         if dstProvinceCon != '' and input['dstProvince'] != '全国':
+            dstPro = dstProvinceCon
             dstProvinceCon = f'and dstProvinceCode in {dstProvinceCon}'
-        elif dstProvinceCon != '' and input['dstProvince'] == '全国':
-            dstProvinceCon = f'and dstProvinceCode not in {dstProvinceCon}'
+        # elif dstProvinceCon != '' and input['dstProvince'] == '全国':
+        #     dstProvinceCon = f'and dstProvinceCode not in {dstProvinceCon}'
+        # 生成筛选接口属性条件
+        InterfaceTypeCon = generate_interface(input)
+
+        if routeProvienceCon == '' and dstProvinceCon == '':
+            routeProvienceCon = f'and routerProvince in {srcPro}'
+        elif routeProvienceCon == '' and srcProvinceCon == '':
+            routeProvienceCon = f'and routerProvince in {dstPro}'
+        elif routeProvienceCon != '':
+            routeProvienceCon = f'and routerProvince in {routeProvienceCon}'
+        else:
+            routeProvienceCon = f'and routerProvince in {srcPro}'
 
         # 生成源端类型的条件，没有指定则是空
         srcTypeCon = generate_type(input['srcType'])
@@ -174,11 +227,11 @@ def generate_settlement_sql(input):
                 dstProvinceCode,
                 round(sum(bytes)*8/1000/1000/1000/3600/{time_diff},2) as rate 
             from 
-                ngfa_up_analysis.man_idc_analysis_pt1h 
+                ngfa.man_idc_analysis_pt1h 
             where 
                 timestamp >= '{ST}' and timestamp < '{ET}' 
-                and routeProvinceCode in {routeProvienceCon} 
-                and srcProvinceCode in {srcProvinceCon} 
+                {routeProvienceCon} 
+                {srcProvinceCon} 
                 and {InterfaceTypeCon}
                 {dstProvinceCon} 
                 {srcTypeCon} 
@@ -222,10 +275,10 @@ def generate_settlement_sql(input):
                 dstProvinceCode,
                 round(sum(bytes)*8/1000/1000/1000/3600/{time_diff},2) as rate 
             from 
-                ngfa_up_analysis.man_idc_analysis_pt1h 
+                ngfa.man_idc_analysis_pt1h 
             where 
                 timestamp >= '{ST}' and timestamp < '{ET}' 
-                and routeProvinceCode in {routeProvienceCon} 
+                and routerProvince in {routeProvienceCon} 
                 and {srcProvinceCon} 
                 and {InterfaceTypeCon}
                 and {dstProvinceCon} 
@@ -238,10 +291,10 @@ def generate_settlement_sql(input):
                 dstProvinceCode,
                 round(sum(bytes)*8/1000/1000/1000/3600/{time_diff},2) as rate 
             from 
-                ngfa_up_analysis.man_idc_analysis_pt1h 
+                ngfa.man_idc_analysis_pt1h 
             where 
                 timestamp >= '{ST}' and timestamp < '{ET}' 
-                and routeProvinceCode in {SameProvince} 
+                and routerProvince in {SameProvince} 
                 and srcProvinceCode in {SameProvince} 
                 and dstProvinceCode in {SameProvince} 
                 and inInterfaceType = 'dt'
@@ -258,12 +311,18 @@ if __name__ == '__main__':
     #test1 = {'srcProvince': "'安徽'", 'dstProvince': "'江苏'", 'srcType': "'城域网+IDC'", 'dstType': "'城域网+IDC'", 'routerProvince': "'安徽'", 'startTime': "'2023-12-18 00:00:00'", 'endTime': "'2023-12-18 12:00:00'"}
     #test =
     #test2 = ''
-    et = '2023-12-18'
-    st = '2023-12-18 00:00:00'
-    et = et.format('YYYY-MM—DD HH:mm:ss')
-    print(et)
+    #et = '2023-12-18'
+    #st = '2023-12-18 00:00:00'
+    #et = et.format('YYYY-MM—DD HH:mm:ss')
+    #print(et)
     # a = generate_provience(test)
     #a = generate_interface(test1)
     # a = generate_type(test2)
     #a = generate_time_diff_hour(st,et)
     #print(a)
+    a = ['海南', '江苏', '宁夏', '安徽', '重庆', '甘肃', '黑龙江', '吉林', '辽宁', '贵州', '新疆', '西藏', '云南', '福建', '青海', '四川', '上海', '广西', '陕西', '北京', '河南', '山西', '广东浙江', '全国']
+    b = provience_check("'北京'",a)
+    print("最大索引为:", b)
+
+    c = calculate_similarity('北京','北京')
+    print(c)
